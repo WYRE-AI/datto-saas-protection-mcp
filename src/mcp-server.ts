@@ -15,7 +15,6 @@ import {
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
 import type { DattoSaasProtectionClient } from "@wyre-technology/node-datto-saas-protection";
-import { setServerRef } from "./utils/server-ref.js";
 import { elicitConfirmation, elicitSelection, elicitText } from "./utils/elicitation.js";
 import {
   createClient,
@@ -50,7 +49,10 @@ export function createMcpServer(credentialOverrides?: DattoSaasCredentials): Ser
     }
   );
 
-  setServerRef(server);
+  // The caller owns binding this server into server-ref.ts's scope now
+  // (bindServerRef for stdio's single session, runWithServerRef wrapping
+  // the whole per-request chain for HTTP) — createMcpServer() stays
+  // side-effect-free with respect to server-ref.
 
   server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
