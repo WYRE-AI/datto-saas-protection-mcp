@@ -17,6 +17,7 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
 import { cleanCredential, type DattoSaasCredentials } from "./credentials.js";
 import { createMcpServer } from "./mcp-server.js";
+import { bindServerRef, runWithServerRef } from "./utils/server-ref.js";
 
 // ---------------------------------------------------------------------------
 // Transport: stdio (default)
@@ -24,6 +25,10 @@ import { createMcpServer } from "./mcp-server.js";
 
 async function startStdioTransport(): Promise<void> {
   const server = createMcpServer();
+  // stdio is single-session for the whole process — no concurrent tenants
+  // to isolate from each other, so enterWith's process-lifetime binding is
+  // safe.
+  bindServerRef(server);
   const transport = new StdioServerTransport();
   await server.connect(transport);
   console.error("Datto SaaS Protection MCP server running on stdio");
@@ -109,24 +114,31 @@ async function startHttpTransport(): Promise<void> {
         server.close();
       });
 
-      server
-        .connect(transport as unknown as Transport)
-        .then(() => {
-          transport.handleRequest(req, res);
-        })
-        .catch((err) => {
-          console.error("MCP transport error:", err);
-          if (!res.headersSent) {
-            res.writeHead(500, { "Content-Type": "application/json" });
-            res.end(
-              JSON.stringify({
-                jsonrpc: "2.0",
-                error: { code: -32603, message: "Internal error" },
-                id: null,
-              })
-            );
-          }
-        });
+      // The whole chain below (connect through the catch handler) runs
+      // inside runWithServerRef so the server-ref binding — used by
+      // elicitation (elicitConfirmation/elicitSelection/elicitText) —
+      // survives every await gap in this request's lifecycle without
+      // leaking into a concurrent request's server-ref.
+      runWithServerRef(server, () =>
+        server
+          .connect(transport as unknown as Transport)
+          .then(() => {
+            transport.handleRequest(req, res);
+          })
+          .catch((err) => {
+            console.error("MCP transport error:", err);
+            if (!res.headersSent) {
+              res.writeHead(500, { "Content-Type": "application/json" });
+              res.end(
+                JSON.stringify({
+                  jsonrpc: "2.0",
+                  error: { code: -32603, message: "Internal error" },
+                  id: null,
+                })
+              );
+            }
+          })
+      );
 
       return;
     }
