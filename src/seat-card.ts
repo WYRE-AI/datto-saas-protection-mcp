@@ -7,7 +7,7 @@
  * simply means the host renders no card while the JSON payload is unchanged.
  */
 
-import type { SaasProtectionSeat } from "@wyre-technology/node-datto-saas-protection";
+import type { SaasProtectionSeat } from "@wyre-ai/node-datto-saas-protection";
 
 export const SEAT_CARD_RESOURCE_URI = "ui://datto-saas/seat-card.html";
 

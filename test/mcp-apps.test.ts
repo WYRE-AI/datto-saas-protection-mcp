@@ -25,9 +25,9 @@ import { SEAT_CARD_HTML } from '../src/generated/seat-card-html.js';
 
 const mockSeatsGet = vi.fn();
 
-vi.mock('@wyre-technology/node-datto-saas-protection', async (importOriginal) => {
+vi.mock('@wyre-ai/node-datto-saas-protection', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@wyre-technology/node-datto-saas-protection')>();
+    await importOriginal<typeof import('@wyre-ai/node-datto-saas-protection')>();
   return {
     ...actual,
     DattoSaasProtectionClient: class {

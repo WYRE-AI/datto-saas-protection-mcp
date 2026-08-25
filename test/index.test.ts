@@ -129,7 +129,7 @@ describe('issue #73: unresolved MCPB config placeholder in DATTO_SAAS_REGION', (
 
   it('proves the underlying bug: the raw SDK rejects the placeholder region', async () => {
     const { DattoSaasProtectionClient } = await import(
-      '@wyre-technology/node-datto-saas-protection'
+      '@wyre-ai/node-datto-saas-protection'
     );
     expect(
       () =>

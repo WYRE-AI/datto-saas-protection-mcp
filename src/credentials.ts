@@ -6,7 +6,7 @@
  * ingress and builds the SDK client.
  */
 
-import { DattoSaasProtectionClient } from "@wyre-technology/node-datto-saas-protection";
+import { DattoSaasProtectionClient } from "@wyre-ai/node-datto-saas-protection";
 
 export interface DattoSaasCredentials {
   publicKey: string;
