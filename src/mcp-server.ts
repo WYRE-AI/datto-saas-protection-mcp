@@ -14,7 +14,7 @@ import {
   ListToolsRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import type { DattoSaasProtectionClient } from "@wyre-ai/node-datto-saas-protection";
+import type { DattoSaasProtectionClient } from "@wyre-technology/node-datto-saas-protection";
 import { elicitConfirmation, elicitSelection, elicitText } from "./utils/elicitation.js";
 import {
   createClient,
