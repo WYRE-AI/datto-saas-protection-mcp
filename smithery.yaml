@@ -4,13 +4,14 @@ startCommand:
   configSchema:
     type: object
     required:
-      - dattoSaasApiKey
+      - dattoSaasPublicKey
+      - dattoSaasSecretKey
     properties:
-      dattoSaasApiKey:
+      dattoSaasPublicKey:
         type: string
-        description: Your Datto SaaS Protection (Backupify) API key
-      dattoSaasRegion:
+        description: Public API key from Partner Portal > Admin > Integrations > API Keys
+      dattoSaasSecretKey:
         type: string
-        description: "Region: 'us' (default) or 'eu'"
+        description: Secret API key from Partner Portal > Admin > Integrations > API Keys
   commandFunction: |-
-    (config) => ({ command: 'node', args: ['dist/index.js'], env: { DATTO_SAAS_API_KEY: config.dattoSaasApiKey, DATTO_SAAS_REGION: config.dattoSaasRegion, MCP_TRANSPORT: 'stdio' } })
+    (config) => ({ command: 'node', args: ['dist/index.js'], env: { DATTO_SAAS_PUBLIC_KEY: config.dattoSaasPublicKey, DATTO_SAAS_SECRET_KEY: config.dattoSaasSecretKey, MCP_TRANSPORT: 'stdio' } })

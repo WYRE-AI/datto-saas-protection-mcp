@@ -4,8 +4,8 @@
  *
  * Runs inside the host's sandboxed iframe. Uses the official MCP Apps client
  * (`App`) to receive the tool result from the host. The card is read-only —
- * restores are deliberately kept out of the UI surface (they are destructive
- * and elicitation-gated in the datto_saas_queue_restore tool).
+ * Datto's SaaS Protection REST API has no restore surface, and the one write
+ * route it does have (bulkSeatChange) is unreachable through this server.
  *
  * The server attaches a normalized `_card` payload to datto_saas_get_seat
  * results (see src/seat-card.ts) so this renderer never needs to interpret
@@ -42,8 +42,8 @@ interface SeatCard {
   email?: string;
   seatType?: string;
   status: string;
-  backupStatus: string;
-  lastBackupAt?: string;
+  billing?: string;
+  protectedSince?: string;
 }
 
 const brand: Brand = window.__BRAND__ ?? {};
@@ -118,7 +118,7 @@ function render(s: SeatCard): void {
       "div",
       "brandrow",
       brandId,
-      el("span", "seatid", `${s.seatId.slice(0, 8)} · SaaS Protection`),
+      el("span", "seatid", "SaaS Protection"),
     ),
     el("h1", "", s.title),
     el("div", "badges", badge(s.seatType, "badge--type"), badge(s.status, "badge--status")),
@@ -126,8 +126,8 @@ function render(s: SeatCard): void {
       "div",
       "grid",
       field("Email", s.email),
-      field("Backup status", s.backupStatus, true),
-      field("Last backup", s.lastBackupAt && fmtDate(s.lastBackupAt)),
+      field("Billing", s.billing, true),
+      field("Protected since", s.protectedSince && fmtDate(s.protectedSince)),
     ),
   );
 

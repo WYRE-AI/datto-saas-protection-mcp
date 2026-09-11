@@ -3,8 +3,8 @@
   "name": "datto-saas-protection-mcp",
   "display_name": "Datto SaaS Protection MCP Server",
   "version": "0.0.0",
-  "description": "MCP server for Datto SaaS Protection (Backupify) - access M365/GWS backup status, queue restores, and review seat usage through AI assistants",
-  "long_description": "Provides AI assistants with structured access to your Datto SaaS Protection (Backupify) tenant. List customer organizations and protected domains, browse seats and backup history for Microsoft 365 and Google Workspace, queue restores, monitor restore progress, and review activity logs and license usage through the Model Context Protocol.",
+  "description": "MCP server for Datto SaaS Protection (Backupify) - read M365/GWS backup posture, seats and license usage through AI assistants",
+  "long_description": "Provides AI assistants with read-only, structured access to your Datto SaaS Protection (Backupify) tenant. List the customers and protected domains your API key covers, browse seats for Microsoft 365 and Google Workspace, pull per-customer backup and storage reports, and review the partner portal activity log and seat usage through the Model Context Protocol.",
   "author": { "name": "Wyre Technology", "url": "https://github.com/WYRE-AI" },
   "repository": { "type": "git", "url": "https://github.com/WYRE-AI/datto-saas-protection-mcp" },
   "homepage": "https://github.com/WYRE-AI/datto-saas-protection-mcp",
@@ -19,16 +19,14 @@
       "env": {
         "DATTO_SAAS_PUBLIC_KEY": "${user_config.datto_saas_public_key}",
         "DATTO_SAAS_SECRET_KEY": "${user_config.datto_saas_secret_key}",
-        "DATTO_SAAS_REGION": "${user_config.datto_saas_region}",
         "MCP_TRANSPORT": "stdio"
       }
     }
   },
   "tools_generated": true,
   "user_config": {
-    "datto_saas_public_key": { "type": "string", "title": "Datto SaaS Public Key", "description": "Public API key from the Datto SaaS Protection partner portal", "sensitive": true, "required": true },
-    "datto_saas_secret_key": { "type": "string", "title": "Datto SaaS Secret Key", "description": "Secret API key from the Datto SaaS Protection partner portal", "sensitive": true, "required": true },
-    "datto_saas_region": { "type": "string", "title": "Datto SaaS Region", "description": "Region: 'us' (default) or 'eu'", "sensitive": false, "required": false }
+    "datto_saas_public_key": { "type": "string", "title": "Datto SaaS Public Key", "description": "Public API key from Partner Portal > Admin > Integrations > API Keys", "sensitive": true, "required": true },
+    "datto_saas_secret_key": { "type": "string", "title": "Datto SaaS Secret Key", "description": "Secret API key from Partner Portal > Admin > Integrations > API Keys", "sensitive": true, "required": true }
   },
   "compatibility": { "platforms": ["darwin", "win32", "linux"], "runtimes": { "node": ">=18.0.0" }, "claude_desktop": ">=0.10.0" }
 }
