@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, it, expect } from 'vitest';
 import { cleanCredential, createClient, getCredentials } from '../src/credentials.js';
+import { DATTO_API_BASE_URL } from '../src/datto-api.js';
 
 describe('Datto SaaS Protection MCP Server', () => {
   describe('Tool Definitions', () => {
@@ -8,15 +9,13 @@ describe('Datto SaaS Protection MCP Server', () => {
       'datto_saas_list_domains',
       'datto_saas_list_seats',
       'datto_saas_get_seat',
-      'datto_saas_list_backups',
-      'datto_saas_queue_restore',
-      'datto_saas_get_restore_status',
+      'datto_saas_get_backup_report',
       'datto_saas_list_activity',
       'datto_saas_get_license_usage',
     ];
 
-    it('should define all 9 tools', () => {
-      expect(expectedTools).toHaveLength(9);
+    it('should define all 7 tools', () => {
+      expect(expectedTools).toHaveLength(7);
     });
 
     it('should include client + domain tools', () => {
@@ -29,35 +28,20 @@ describe('Datto SaaS Protection MCP Server', () => {
       expect(expectedTools).toContain('datto_saas_get_seat');
     });
 
-    it('should include backup + restore tools', () => {
-      expect(expectedTools).toContain('datto_saas_list_backups');
-      expect(expectedTools).toContain('datto_saas_queue_restore');
-      expect(expectedTools).toContain('datto_saas_get_restore_status');
+    it('should include the backup report tool', () => {
+      expect(expectedTools).toContain('datto_saas_get_backup_report');
     });
 
     it('should include activity + license tools', () => {
       expect(expectedTools).toContain('datto_saas_list_activity');
       expect(expectedTools).toContain('datto_saas_get_license_usage');
     });
-  });
 
-  describe('Region validation', () => {
-    const validRegions = ['us', 'eu'];
-
-    it('should support us and eu regions', () => {
-      expect(validRegions).toContain('us');
-      expect(validRegions).toContain('eu');
-    });
-
-    it('should default to us when DATTO_SAAS_REGION is not set', () => {
-      expect(process.env.DATTO_SAAS_REGION).toBeUndefined();
-    });
-  });
-
-  describe('Credentials', () => {
-    it('should require DATTO_SAAS_API_KEY', () => {
-      const required = ['DATTO_SAAS_API_KEY'];
-      expect(required).toHaveLength(1);
+    // Datto's REST API has no restore route of any kind. The old tools called
+    // /seats/{id}/restores and /restores/{id}, which do not exist.
+    it('should not expose restore tools', () => {
+      expect(expectedTools).not.toContain('datto_saas_queue_restore');
+      expect(expectedTools).not.toContain('datto_saas_get_restore_status');
     });
   });
 
@@ -69,15 +53,62 @@ describe('Datto SaaS Protection MCP Server', () => {
   });
 });
 
-// Regression tests for issue #73 (mirrors itglue-mcp #73). The MCPB desktop
-// bundle maps DATTO_SAAS_REGION to ${user_config.datto_saas_region}. When the
-// optional region field is left blank, Claude Desktop injects the literal,
-// unresolved string "${user_config.datto_saas_region}" rather than an empty
-// value. Being truthy it beat the `|| "us"` fallback and reached the SDK, which
-// throws `Unsupported region: ...` from createClient() — called outside the
-// tool handler's try/catch — so EVERY tool call failed with an uncaught MCP
-// protocol error out of the box.
-describe('issue #73: unresolved MCPB config placeholder in DATTO_SAAS_REGION', () => {
+describe('credentials', () => {
+  const originalEnv = process.env;
+
+  beforeEach(() => {
+    process.env = { ...originalEnv };
+    delete process.env.DATTO_SAAS_PUBLIC_KEY;
+    delete process.env.DATTO_SAAS_SECRET_KEY;
+    delete process.env.DATTO_SAAS_API_URL;
+  });
+
+  afterEach(() => {
+    process.env = originalEnv;
+  });
+
+  it('returns null without both keys', () => {
+    expect(getCredentials()).toBeNull();
+    process.env.DATTO_SAAS_PUBLIC_KEY = 'pub';
+    expect(getCredentials()).toBeNull();
+  });
+
+  it('reads the public/secret key pair', () => {
+    process.env.DATTO_SAAS_PUBLIC_KEY = 'pub';
+    process.env.DATTO_SAAS_SECRET_KEY = 'sec';
+    expect(getCredentials()).toEqual({
+      publicKey: 'pub',
+      secretKey: 'sec',
+      baseUrl: undefined,
+    });
+  });
+
+  // There is no region option any more: Datto SaaS Protection is served from a
+  // single host. The SDK's "eu" region (api.eu.datto.com) does not resolve.
+  it('has no region concept', () => {
+    process.env.DATTO_SAAS_PUBLIC_KEY = 'pub';
+    process.env.DATTO_SAAS_SECRET_KEY = 'sec';
+    process.env.DATTO_SAAS_REGION = 'eu';
+    expect(getCredentials()).not.toHaveProperty('region');
+    expect(DATTO_API_BASE_URL).toBe('https://api.datto.com');
+  });
+
+  it('createClient builds a client without throwing', () => {
+    expect(() => createClient({ publicKey: 'pub', secretKey: 'sec' })).not.toThrow();
+  });
+
+  it('createClient rejects missing keys', () => {
+    expect(() => createClient({ publicKey: '', secretKey: 'sec' })).toThrow(/publicKey/);
+    expect(() => createClient({ publicKey: 'pub', secretKey: '' })).toThrow(/secretKey/);
+  });
+});
+
+// Regression tests for issue #73 (mirrors itglue-mcp #73). An MCPB desktop
+// bundle maps optional config to ${user_config.*}; when the field is left
+// blank Claude Desktop injects that literal, unresolved string rather than an
+// empty value. Being truthy it beats every `|| default` fallback and reaches
+// the client as if it were real configuration.
+describe('issue #73: unresolved MCPB config placeholders', () => {
   const originalEnv = process.env;
 
   beforeEach(() => {
@@ -92,52 +123,29 @@ describe('issue #73: unresolved MCPB config placeholder in DATTO_SAAS_REGION', (
     expect(cleanCredential(undefined)).toBeUndefined();
     expect(cleanCredential('')).toBeUndefined();
     expect(cleanCredential('   ')).toBeUndefined();
-    expect(cleanCredential('${user_config.datto_saas_region}')).toBeUndefined();
-    expect(cleanCredential('  ${user_config.datto_saas_region}  ')).toBeUndefined();
+    expect(cleanCredential('${user_config.datto_saas_api_url}')).toBeUndefined();
+    expect(cleanCredential('  ${user_config.datto_saas_api_url}  ')).toBeUndefined();
   });
 
   it('cleanCredential preserves and trims real values', () => {
-    expect(cleanCredential('eu')).toBe('eu');
-    expect(cleanCredential('  us  ')).toBe('us');
+    expect(cleanCredential('https://api.datto.com')).toBe('https://api.datto.com');
+    expect(cleanCredential('  pub-key  ')).toBe('pub-key');
   });
 
-  it('resolves region to "us" when DATTO_SAAS_REGION is an unresolved placeholder', () => {
+  it('an unresolved DATTO_SAAS_API_URL placeholder falls back to the real host', () => {
     process.env.DATTO_SAAS_PUBLIC_KEY = 'pub';
     process.env.DATTO_SAAS_SECRET_KEY = 'sec';
-    process.env.DATTO_SAAS_REGION = '${user_config.datto_saas_region}';
+    process.env.DATTO_SAAS_API_URL = '${user_config.datto_saas_api_url}';
 
-    expect(getCredentials()?.region).toBe('us');
+    expect(getCredentials()?.baseUrl).toBeUndefined();
+    expect(() => createClient(getCredentials()!)).not.toThrow();
   });
 
-  it('still honours a real region override', () => {
+  it('still honours a real API URL override', () => {
     process.env.DATTO_SAAS_PUBLIC_KEY = 'pub';
     process.env.DATTO_SAAS_SECRET_KEY = 'sec';
-    process.env.DATTO_SAAS_REGION = 'eu';
+    process.env.DATTO_SAAS_API_URL = 'https://proxy.example.com';
 
-    expect(getCredentials()?.region).toBe('eu');
-  });
-
-  it('createClient no longer throws "Unsupported region" for a placeholder region', () => {
-    process.env.DATTO_SAAS_PUBLIC_KEY = 'pub';
-    process.env.DATTO_SAAS_SECRET_KEY = 'sec';
-    process.env.DATTO_SAAS_REGION = '${user_config.datto_saas_region}';
-
-    const creds = getCredentials();
-    expect(creds).not.toBeNull();
-    expect(() => createClient(creds!)).not.toThrow();
-  });
-
-  it('proves the underlying bug: the raw SDK rejects the placeholder region', async () => {
-    const { DattoSaasProtectionClient } = await import(
-      '@wyre-technology/node-datto-saas-protection'
-    );
-    expect(
-      () =>
-        new DattoSaasProtectionClient({
-          publicKey: 'pub',
-          secretKey: 'sec',
-          region: '${user_config.datto_saas_region}' as 'us' | 'eu',
-        })
-    ).toThrow(/Unsupported region/);
+    expect(getCredentials()?.baseUrl).toBe('https://proxy.example.com');
   });
 });

@@ -15,7 +15,7 @@ import { createServer, IncomingMessage, ServerResponse, Server as HttpServer } f
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
-import { cleanCredential, type DattoSaasCredentials } from "./credentials.js";
+import { type DattoSaasCredentials } from "./credentials.js";
 import { createMcpServer } from "./mcp-server.js";
 import { bindServerRef, runWithServerRef } from "./utils/server-ref.js";
 import { verifyS2sHeader, S2S_HEADER } from "./s2s-verify.js";
@@ -96,8 +96,8 @@ async function startHttpTransport(): Promise<void> {
         const headers = req.headers as Record<string, string | string[] | undefined>;
         const publicKey = headers["x-datto-saas-public-key"] as string | undefined;
         const secretKey = headers["x-datto-saas-secret-key"] as string | undefined;
-        // Strip an unresolved placeholder before the "us" fallback (issue #73).
-        const region = cleanCredential(headers["x-datto-saas-region"] as string | undefined) || "us";
+        // No region header: Datto SaaS Protection has a single API host
+        // (api.datto.com). X-Datto-SaaS-Region, if still sent, is ignored.
 
         if (!publicKey || !secretKey) {
           res.writeHead(401, { "Content-Type": "application/json" });
@@ -105,14 +105,14 @@ async function startHttpTransport(): Promise<void> {
             JSON.stringify({
               error: "Missing credentials",
               message:
-                "Gateway mode requires X-Datto-SaaS-Public-Key and X-Datto-SaaS-Secret-Key headers (X-Datto-SaaS-Region optional, defaults to 'us')",
+                "Gateway mode requires X-Datto-SaaS-Public-Key and X-Datto-SaaS-Secret-Key headers",
               required: ["X-Datto-SaaS-Public-Key", "X-Datto-SaaS-Secret-Key"],
             })
           );
           return;
         }
 
-        gatewayCredentials = { publicKey, secretKey, region };
+        gatewayCredentials = { publicKey, secretKey };
       }
 
       // Stateless: fresh server + transport per request

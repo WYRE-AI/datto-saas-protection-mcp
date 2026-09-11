@@ -7,7 +7,7 @@
  * simply means the host renders no card while the JSON payload is unchanged.
  */
 
-import type { SaasProtectionSeat } from "@wyre-technology/node-datto-saas-protection";
+import type { SaasSeat } from "./datto-api.js";
 
 export const SEAT_CARD_RESOURCE_URI = "ui://datto-saas/seat-card.html";
 
@@ -26,18 +26,21 @@ export const SEAT_CARD_META = {
 
 /** Mirror of SeatCard in ui/seat-card.ts — keep in sync. */
 export interface SeatCard {
+  /** Datto's `mainId` — the protected entity, usually an email address. */
   seatId: string;
-  /** Display name, falling back to email, falling back to the seat ID. */
+  /** Display name, falling back to the seat id. */
   title: string;
+  /** `mainId` when it is an address rather than an opaque id. */
   email?: string;
-  /** Label-resolved seat type, e.g. "Mailbox" or "Google Workspace user". */
+  /** Label-resolved seat type, e.g. "Mailbox" or "SharePoint site". */
   seatType?: string;
-  /** "Active" or "Archived" (retained-but-deleted). */
+  /** Datto's `seatState`, e.g. "Active". */
   status: string;
-  /** "Backed up" when a last-backup timestamp exists, else "No backups recorded". */
-  backupStatus: string;
-  /** ISO 8601 timestamp of the most recent backup, when known. */
-  lastBackupAt?: string;
+  /** "Billable" / "Not billable", from Datto's string `billable` flag. */
+  billing?: string;
+  /** ISO 8601 form of `dateAdded` — when the seat entered protection. */
+  protectedSince?: string;
+
 }
 
 /** Brand overrides injected into the card as `window.__BRAND__`. */
@@ -86,49 +89,60 @@ export function resolveBrandFromEnv(): CardBrand {
   return brand;
 }
 
-/** Human-readable labels for the SDK's SeatType values. */
+/** Human-readable labels for Datto's `seatType` values. */
 const SEAT_TYPE_LABELS: Record<string, string> = {
-  mailbox: "Mailbox",
-  onedrive: "OneDrive",
-  sharepoint: "SharePoint site",
-  google_user: "Google Workspace user",
+  User: "User",
+  SharedMailbox: "Shared mailbox",
+  Site: "SharePoint site",
+  TeamSite: "Team site",
+  Team: "Team",
+  SharedDrive: "Shared drive",
 };
 
+/** `mainId` is an address for user/mailbox seats and an opaque id otherwise. */
+function asEmail(mainId: string): string | undefined {
+  return mainId.includes("@") ? mainId : undefined;
+}
+
 /**
- * Normalize an SDK seat into the flat, label-resolved payload the ui:// seat
- * card renders from. Seat types are resolved via SEAT_TYPE_LABELS (unknown
- * types pass through as-is), archived seats are labelled "Archived", and the
- * backup status is derived from the presence of a last-backup timestamp.
+ * Normalize a Datto seat into the flat, label-resolved payload the ui:// seat
+ * card renders from.
+ *
+ * Every field here exists on Datto's real seat schema (`mainId`, `name`,
+ * `seatType`, `seatState`, `billable`, `dateAdded`, `remoteId`). The card
+ * deliberately shows no backup timestamp: the seats endpoint does not return
+ * one, and the previous card invented `lastBackupAt` from a speculative
+ * schema. Per-customer backup posture comes from
+ * `datto_saas_get_backup_report` instead.
  */
 export function buildSeatCard(
-  seat: Partial<SaasProtectionSeat> | null | undefined
+  seat: Partial<SaasSeat> | null | undefined
 ): SeatCard | null {
-  if (!seat || typeof seat.id !== "string" || seat.id === "") {
+  if (!seat || typeof seat.mainId !== "string" || seat.mainId === "") {
     return null;
   }
 
-  const email = typeof seat.email === "string" && seat.email ? seat.email : undefined;
-  const displayName =
-    typeof seat.displayName === "string" && seat.displayName ? seat.displayName : undefined;
-
-  let lastBackupAt: string | undefined;
-  if (typeof seat.lastBackupAt === "string" && seat.lastBackupAt) {
-    const parsed = new Date(seat.lastBackupAt);
-    if (!Number.isNaN(parsed.getTime())) lastBackupAt = parsed.toISOString();
-  }
-
   const card: SeatCard = {
-    seatId: seat.id,
-    title: displayName ?? email ?? seat.id,
-    status: seat.archived === true ? "Archived" : "Active",
-    backupStatus: lastBackupAt ? "Backed up" : "No backups recorded",
+    seatId: seat.mainId,
+    title: seat.name || seat.mainId,
+    status: seat.seatState || "Unknown",
   };
 
+  const email = asEmail(seat.mainId);
   if (email) card.email = email;
-  if (typeof seat.type === "string" && seat.type) {
-    card.seatType = SEAT_TYPE_LABELS[seat.type] ?? seat.type;
+
+  if (typeof seat.seatType === "string" && seat.seatType) {
+    card.seatType = SEAT_TYPE_LABELS[seat.seatType] ?? seat.seatType;
   }
-  if (lastBackupAt) card.lastBackupAt = lastBackupAt;
+
+  // Datto sends `billable` as the string "1" / "0".
+  if (seat.billable === "1") card.billing = "Billable";
+  else if (seat.billable === "0") card.billing = "Not billable";
+
+  if (typeof seat.dateAdded === "string" && seat.dateAdded) {
+    const parsed = new Date(seat.dateAdded);
+    if (!Number.isNaN(parsed.getTime())) card.protectedSince = parsed.toISOString();
+  }
 
   return card;
 }

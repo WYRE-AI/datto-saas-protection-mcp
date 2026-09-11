@@ -3,21 +3,25 @@
  *
  * Credentials arrive either from environment variables (env / desktop mode) or
  * per-request HTTP headers (gateway mode). This module normalises them at
- * ingress and builds the SDK client.
+ * ingress and builds the API client.
  */
 
-import { DattoSaasProtectionClient } from "@wyre-technology/node-datto-saas-protection";
+import { DattoSaasApi } from "./datto-api.js";
 
 export interface DattoSaasCredentials {
   publicKey: string;
   secretKey: string;
-  region?: string;
+  /**
+   * Optional API origin override (proxies, contract tests). Datto has exactly
+   * one API host, so leaving this unset is correct for every real deployment.
+   */
+  baseUrl?: string;
 }
 
-// An unresolved MCPB/DXT manifest placeholder, e.g.
-// "${user_config.datto_saas_region}". Desktop hosts inject the config template
-// verbatim when its optional user_config field is left blank, so the literal
-// string arrives in the env var / header instead of an empty value.
+// An unresolved MCPB/DXT manifest placeholder, e.g. "${user_config.foo}".
+// Desktop hosts inject the config template verbatim when an optional
+// user_config field is left blank, so the literal string arrives in the env
+// var / header instead of an empty value.
 const CONFIG_PLACEHOLDER = /^\$\{.*\}$/;
 
 /**
@@ -26,15 +30,11 @@ const CONFIG_PLACEHOLDER = /^\$\{.*\}$/;
  * Returns `undefined` for values that are effectively absent, so callers can
  * fall back to a default instead of treating them as real input:
  *   - undefined / empty / whitespace-only
- *   - an unresolved manifest placeholder like `${user_config.datto_saas_region}`
+ *   - an unresolved manifest placeholder like `${user_config.datto_saas_api_url}`
  *
- * Root cause of issue #73: leaving the optional region field blank left the
- * literal `${user_config.datto_saas_region}` in DATTO_SAAS_REGION. Being a
- * truthy string it beat the `|| "us"` fallback and reached the SDK, which threw
- * `Unsupported region: ${user_config.datto_saas_region}` from createClient() —
- * outside the tool handler's try/catch — so every tool call failed with an
- * uncaught MCP protocol error. Stripping the placeholder here restores the
- * "us" default. Mirrors itglue-mcp #73.
+ * Root cause of issue #73: an unresolved placeholder is a truthy string, so it
+ * beat every `|| default` fallback and reached the client as if it were real
+ * configuration. Stripping it here restores the default.
  */
 export function cleanCredential(value: string | undefined): string | undefined {
   const trimmed = value?.trim();
@@ -43,24 +43,20 @@ export function cleanCredential(value: string | undefined): string | undefined {
 }
 
 export function getCredentials(): DattoSaasCredentials | null {
-  const publicKey = process.env.DATTO_SAAS_PUBLIC_KEY;
-  const secretKey = process.env.DATTO_SAAS_SECRET_KEY;
+  const publicKey = cleanCredential(process.env.DATTO_SAAS_PUBLIC_KEY);
+  const secretKey = cleanCredential(process.env.DATTO_SAAS_SECRET_KEY);
   if (!publicKey || !secretKey) return null;
   return {
     publicKey,
     secretKey,
-    // Strip an unresolved placeholder before the "us" fallback (issue #73).
-    region: cleanCredential(process.env.DATTO_SAAS_REGION) || "us",
+    baseUrl: cleanCredential(process.env.DATTO_SAAS_API_URL),
   };
 }
 
-export function createClient(creds: DattoSaasCredentials): DattoSaasProtectionClient {
-  return new DattoSaasProtectionClient({
+export function createClient(creds: DattoSaasCredentials): DattoSaasApi {
+  return new DattoSaasApi({
     publicKey: creds.publicKey,
     secretKey: creds.secretKey,
-    // Clean here too as the final guard before the SDK: the previous
-    // `(creds.region as "us" | "eu")` cast was a no-op that let a placeholder
-    // slip through to `resolveConfig`, which throws "Unsupported region".
-    region: (cleanCredential(creds.region) as "us" | "eu") || "us",
+    baseUrl: cleanCredential(creds.baseUrl),
   });
 }
