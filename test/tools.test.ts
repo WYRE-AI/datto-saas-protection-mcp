@@ -70,7 +70,12 @@ const CREDS = { publicKey: "public-key", secretKey: "secret-key", region: "us" a
 async function connectClient(
   creds?: { publicKey: string; secretKey: string; region: "us" | "eu" }
 ): Promise<Client> {
+  // Bind the server ref exactly like the real stdio/HTTP entrypoints do, so
+  // "elicitation unavailable" tests exercise the real reason it's
+  // unavailable -- the connected client not declaring the capability --
+  // rather than accidentally testing a ref that was never bound at all.
   const server = createMcpServer(creds);
+  bindServerRef(server);
   const client = new Client({ name: "test-host", version: "0.0.0" });
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   await Promise.all([
@@ -186,11 +191,17 @@ describe("datto_saas_list_domains", () => {
   });
 
   it("errors instead of calling the client when clientId is omitted and elicitation is unavailable", async () => {
+    // Give resolveClientId a real client list so it actually reaches
+    // elicitSelection (and fails there, because this client declares no
+    // elicitation capability) rather than throwing on an unconfigured mock's
+    // undefined return value -- a different failure than the one under test.
+    mockClientsList.mockResolvedValue({ items: [{ id: "c1", name: "Acme" }], pagination: {} });
     const client = await connectClient(CREDS);
     const result = (await client.callTool({
       name: "datto_saas_list_domains",
       arguments: {},
     })) as ToolResult;
+    expect(mockClientsList).toHaveBeenCalledWith({ limit: 50 });
     expect(result.isError).toBe(true);
     expect(text(result)).toBe("Error: clientId is required.");
     expect(mockDomainsList).not.toHaveBeenCalled();
@@ -267,7 +278,7 @@ describe("datto_saas_queue_restore", () => {
     expect(JSON.parse(text(result))).toEqual({ id: "r1", status: "queued" });
   });
 
-  it("cancels without calling the client when the user declines", async () => {
+  it("cancels without calling the client when the user answers the confirm field false", async () => {
     const client = await connectElicitingClient(CREDS, { action: "accept", content: { confirm: false } });
     const result = (await client.callTool({
       name: "datto_saas_queue_restore",
@@ -275,6 +286,23 @@ describe("datto_saas_queue_restore", () => {
     })) as ToolResult;
     expect(result.isError).toBe(true);
     expect(text(result)).toBe("Restore cancelled by user.");
+    expect(mockRestoresQueue).not.toHaveBeenCalled();
+  });
+
+  it("treats an elicitation-level decline (closing the prompt) the same as unsupported confirmation", async () => {
+    // action:"decline" carries no content, so elicitConfirmation's
+    // `result.action === "accept" && result.content` guard falls through to
+    // its `return null` -- the same null the unsupported-confirmation branch
+    // below produces, but for a different real reason (user closed the
+    // prompt vs. the client never offering one). Pinning this separately
+    // catches a future change that made confirm:false and decline diverge.
+    const client = await connectElicitingClient(CREDS, { action: "decline" });
+    const result = (await client.callTool({
+      name: "datto_saas_queue_restore",
+      arguments: { seatId: "s1", items: ["item1"] },
+    })) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(text(result)).toMatch(/does not support confirmation prompts/);
     expect(mockRestoresQueue).not.toHaveBeenCalled();
   });
 
