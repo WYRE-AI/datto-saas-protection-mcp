@@ -1,7 +1,7 @@
 {
   "name": "@wyre-ai/datto-saas-protection-mcp",
   "version": "0.0.0",
-  "description": "Datto SaaS Protection MCP server for Claude — M365/GWS backup status, restores, seat management",
+  "description": "Datto SaaS Protection MCP server — customers/domains, seats, backup status and bulk seat licensing via the documented Datto REST API",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -46,7 +46,7 @@
   "homepage": "https://github.com/WYRE-AI/datto-saas-protection-mcp#readme",
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.31.0",
-    "@wyre-technology/node-datto-saas-protection": "^2.0.1"
+    "@wyre-ai/node-datto-saas-protection": "^3.0.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

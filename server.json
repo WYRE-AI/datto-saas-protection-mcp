@@ -2,7 +2,7 @@
   "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
   "name": "io.github.WYRE-AI/datto-saas-protection-mcp",
   "title": "Datto SaaS Protection",
-  "description": "MCP server for Datto SaaS Protection — M365/GWS backups, restores, seats.",
+  "description": "MCP server for Datto SaaS Protection \u2014 customers, seats, backup status, bulk seat licensing.",
   "repository": {
     "url": "https://github.com/WYRE-AI/datto-saas-protection-mcp",
     "source": "github"
@@ -18,17 +18,17 @@
       },
       "environmentVariables": [
         {
-          "name": "DATTO_SAAS_API_KEY",
-          "description": "Datto SaaS Protection (Backupify) API key",
+          "name": "DATTO_SAAS_PUBLIC_KEY",
+          "description": "Datto REST API public key (Partner Portal > Admin > Integrations > API Keys)",
           "isRequired": true,
           "isSecret": true,
           "format": "string"
         },
         {
-          "name": "DATTO_SAAS_REGION",
-          "description": "Region: 'us' (default) or 'eu'",
-          "isRequired": false,
-          "default": "us",
+          "name": "DATTO_SAAS_SECRET_KEY",
+          "description": "Datto REST API secret key",
+          "isRequired": true,
+          "isSecret": true,
           "format": "string"
         },
         {
