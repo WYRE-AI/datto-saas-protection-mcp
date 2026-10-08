@@ -220,6 +220,15 @@ describe("datto_saas_list_seats", () => {
     expect(mockSeatsList).not.toHaveBeenCalled();
   });
 
+  it("surfaces a vendor error from the customer picker instead of a missing-id message", async () => {
+    mockDomainsList.mockRejectedValue(new Error("Authentication failed (401)"));
+    const client = await connectClient(CREDS);
+    const result = (await client.callTool({ name: "datto_saas_list_seats", arguments: {} })) as ToolResult;
+    expect(result.isError).toBe(true);
+    expect(text(result)).toBe("Error: Authentication failed (401)");
+    expect(mockSeatsList).not.toHaveBeenCalled();
+  });
+
   it("offers a customer picker from /saas/domains when elicitation is available", async () => {
     mockDomainsList.mockResolvedValue(DOMAINS);
     mockSeatsList.mockResolvedValue([]);
@@ -319,6 +328,9 @@ describe("datto_saas_bulk_seat_change", () => {
     [{ actionType: "pause" }, /actionType/],
     [{ ids: [] }, /between 1 and 100/],
     [{ ids: Array.from({ length: 101 }, (_, i) => `r${i}`) }, /between 1 and 100/],
+    [{ ids: [null] }, /non-empty string/],
+    [{ ids: [" "] }, /non-empty string/],
+    [{ ids: [1] }, /non-empty string/],
     [{ externalSubscriptionId: "" }, /externalSubscriptionId/],
   ])("validates %o before prompting", async (override, pattern) => {
     const client = await connectClient(CREDS);

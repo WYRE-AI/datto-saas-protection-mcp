@@ -255,7 +255,9 @@ export function createMcpServer(credentialOverrides?: DattoSaasCredentials): Ser
   /**
    * Resolve a saasCustomerId: use the provided value, otherwise offer a
    * picker built from GET /saas/domains (when the client supports
-   * elicitation). Returns null when nothing could be resolved.
+   * elicitation). Returns null when the domain list is empty or the user
+   * declines the picker. A failure from domains.list() propagates so the
+   * tool handler can report the vendor's own status.
    */
   async function resolveCustomerId(
     client: DattoSaasProtectionClient,
@@ -264,23 +266,19 @@ export function createMcpServer(credentialOverrides?: DattoSaasCredentials): Ser
     if (provided !== undefined && provided !== null && String(provided).trim() !== "") {
       return String(provided).trim();
     }
-    try {
-      const domains = await client.domains.list();
-      if (domains.length === 0) return null;
-      const seen = new Set<string>();
-      const options: Array<{ value: string; label: string }> = [];
-      for (const d of domains) {
-        const id = String(d.saasCustomerId);
-        if (seen.has(id)) continue;
-        seen.add(id);
-        const name = d.saasCustomerName ?? d.organizationName ?? id;
-        options.push({ value: id, label: d.domain ? `${name} — ${d.domain} (${id})` : `${name} (${id})` });
-        if (options.length >= 25) break;
-      }
-      return await elicitSelection("Select a SaaS Protection customer:", "saasCustomerId", options);
-    } catch {
-      return null;
+    const domains = await client.domains.list();
+    if (domains.length === 0) return null;
+    const seen = new Set<string>();
+    const options: Array<{ value: string; label: string }> = [];
+    for (const d of domains) {
+      const id = String(d.saasCustomerId);
+      if (seen.has(id)) continue;
+      seen.add(id);
+      const name = d.saasCustomerName ?? d.organizationName ?? id;
+      options.push({ value: id, label: d.domain ? `${name} — ${d.domain} (${id})` : `${name} (${id})` });
+      if (options.length >= 25) break;
     }
+    return await elicitSelection("Select a SaaS Protection customer:", "saasCustomerId", options);
   }
 
   function clientCanElicit(): boolean {
@@ -384,14 +382,18 @@ export function createMcpServer(credentialOverrides?: DattoSaasCredentials): Ser
             typeof args.externalSubscriptionId === "string" ? args.externalSubscriptionId.trim() : "";
           const seatType = args.seatType as SeatType;
           const actionType = args.actionType as SeatActionType;
-          const ids = Array.isArray(args.ids) ? args.ids.map((v) => String(v)) : [];
+          const rawIds = Array.isArray(args.ids) ? args.ids : [];
           if (!customerId) return fail("saasCustomerId is required.");
           if (!externalSubscriptionId) return fail("externalSubscriptionId is required (see datto_saas_list_domains).");
           if (!SEAT_TYPES.includes(seatType)) return fail(`seatType must be one of ${SEAT_TYPES.join(", ")} (case-sensitive).`);
           if (!SEAT_ACTION_TYPES.includes(actionType)) return fail(`actionType must be one of ${SEAT_ACTION_TYPES.join(", ")} (case-sensitive).`);
-          if (ids.length === 0 || ids.length > MAX_BULK_SEAT_IDS) {
+          if (rawIds.length === 0 || rawIds.length > MAX_BULK_SEAT_IDS) {
             return fail(`ids must contain between 1 and ${MAX_BULK_SEAT_IDS} remote seat IDs.`);
           }
+          if (rawIds.some((id) => typeof id !== "string" || id.trim().length === 0)) {
+            return fail("ids must contain non-empty string remote seat IDs.");
+          }
+          const ids = rawIds as string[];
 
           const summary =
             `About to ${actionType.toUpperCase()} ${ids.length} ${seatType} seat(s) for SaaS Protection customer ` +
