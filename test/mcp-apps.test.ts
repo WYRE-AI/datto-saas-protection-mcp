@@ -23,15 +23,15 @@ import {
 } from '../src/seat-card.js';
 import { SEAT_CARD_HTML } from '../src/generated/seat-card-html.js';
 
-const mockSeatsGet = vi.fn();
+const mockSeatsList = vi.fn();
 
-vi.mock('@wyre-technology/node-datto-saas-protection', async (importOriginal) => {
+vi.mock('@wyre-ai/node-datto-saas-protection', async (importOriginal) => {
   const actual =
-    await importOriginal<typeof import('@wyre-technology/node-datto-saas-protection')>();
+    await importOriginal<typeof import('@wyre-ai/node-datto-saas-protection')>();
   return {
     ...actual,
     DattoSaasProtectionClient: class {
-      seats = { get: mockSeatsGet };
+      seats = { list: mockSeatsList };
     },
   };
 });
@@ -49,20 +49,19 @@ async function connectClient(withCreds = false): Promise<Client> {
 const RENDERABLE_TOOLS = ['datto_saas_get_seat'];
 
 const activeSeat = {
-  id: 'seat-3f8a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8',
-  domainId: 'domain-1',
-  clientId: 'client-1',
-  type: 'mailbox',
-  email: 'dana.ruiz@example.com',
-  displayName: 'Dana Ruiz',
-  archived: false,
-  lastBackupAt: '2026-07-16T04:00:00.000Z',
+  remoteId: 'seat-3f8a1b2c-4d5e-6f70-8192-a3b4c5d6e7f8',
+  mainId: 'dana.ruiz@example.com',
+  name: 'Dana Ruiz',
+  seatType: 'User',
+  seatState: 'Active',
+  billable: 1,
+  dateAdded: '2026-01-02T00:00:00Z',
 };
 
 describe('MCP Apps seat card', () => {
   afterEach(() => {
     vi.unstubAllEnvs();
-    mockSeatsGet.mockReset();
+    mockSeatsList.mockReset();
   });
 
   describe('tool _meta advertisement', () => {
@@ -141,38 +140,47 @@ describe('MCP Apps seat card', () => {
 
   describe('datto_saas_get_seat result', () => {
     it('carries the normalized _card payload alongside the raw seat', async () => {
-      mockSeatsGet.mockResolvedValue(activeSeat);
+      mockSeatsList.mockResolvedValue([{ remoteId: 'other', mainId: 'x@example.com' }, activeSeat]);
       const client = await connectClient(true);
       const result = (await client.callTool({
         name: 'datto_saas_get_seat',
-        arguments: { seatId: activeSeat.id },
+        arguments: { saasCustomerId: 1001, seatId: activeSeat.remoteId },
       })) as { isError?: boolean; content: Array<{ text?: string }> };
       expect(result.isError).toBeFalsy();
+      expect(mockSeatsList).toHaveBeenCalledWith('1001');
       const payload = JSON.parse(result.content[0]?.text ?? '{}');
-      expect(payload.id).toBe(activeSeat.id);
-      expect(payload.email).toBe(activeSeat.email);
+      expect(payload.remoteId).toBe(activeSeat.remoteId);
+      expect(payload.mainId).toBe(activeSeat.mainId);
       expect(payload._card).toEqual({
-        seatId: activeSeat.id,
+        seatId: activeSeat.remoteId,
         title: 'Dana Ruiz',
         email: 'dana.ruiz@example.com',
-        seatType: 'Mailbox',
+        seatType: 'User',
         status: 'Active',
-        backupStatus: 'Backed up',
-        lastBackupAt: '2026-07-16T04:00:00.000Z',
+        backupStatus: 'Protected (backups enabled)',
       });
     });
 
-    it('drops the card (not the result) when the payload is not a seat', async () => {
-      mockSeatsGet.mockResolvedValue({ unexpected: 'shape' });
+    it('matches on mainId case-insensitively', async () => {
+      mockSeatsList.mockResolvedValue([activeSeat]);
       const client = await connectClient(true);
       const result = (await client.callTool({
         name: 'datto_saas_get_seat',
-        arguments: { seatId: 'whatever' },
+        arguments: { saasCustomerId: '1001', seatId: 'DANA.RUIZ@example.com' },
       })) as { isError?: boolean; content: Array<{ text?: string }> };
       expect(result.isError).toBeFalsy();
-      const payload = JSON.parse(result.content[0]?.text ?? '{}');
-      expect(payload.unexpected).toBe('shape');
-      expect(payload._card).toBeUndefined();
+      expect(JSON.parse(result.content[0]?.text ?? '{}')._card.seatId).toBe(activeSeat.remoteId);
+    });
+
+    it('returns an isError result when no seat matches', async () => {
+      mockSeatsList.mockResolvedValue([activeSeat]);
+      const client = await connectClient(true);
+      const result = (await client.callTool({
+        name: 'datto_saas_get_seat',
+        arguments: { saasCustomerId: 1001, seatId: 'missing' },
+      })) as { isError?: boolean; content: Array<{ text?: string }> };
+      expect(result.isError).toBe(true);
+      expect(result.content[0]?.text).toMatch(/No seat/);
     });
   });
 
@@ -203,48 +211,43 @@ describe('MCP Apps seat card', () => {
   });
 
   describe('buildSeatCard', () => {
-    it('normalizes a full seat with label-resolved type and status', () => {
+    it('normalizes a Datto seat with label-resolved type and state', () => {
       expect(buildSeatCard(activeSeat)).toEqual({
-        seatId: activeSeat.id,
+        seatId: activeSeat.remoteId,
         title: 'Dana Ruiz',
         email: 'dana.ruiz@example.com',
-        seatType: 'Mailbox',
+        seatType: 'User',
         status: 'Active',
-        backupStatus: 'Backed up',
-        lastBackupAt: '2026-07-16T04:00:00.000Z',
+        backupStatus: 'Protected (backups enabled)',
       });
     });
 
-    it('labels archived seats', () => {
-      const card = buildSeatCard({ ...activeSeat, archived: true });
-      expect(card?.status).toBe('Archived');
+    it('maps every Datto seatState to a protection wording', () => {
+      expect(buildSeatCard({ ...activeSeat, seatState: 'Paused' })?.backupStatus).toBe('Paused (no new backups)');
+      expect(buildSeatCard({ ...activeSeat, seatState: 'Archived' })?.backupStatus).toBe('Archived (backups retained)');
+      expect(buildSeatCard({ ...activeSeat, seatState: 'Unprotected' })?.backupStatus).toBe('Not protected');
+      expect(buildSeatCard({ ...activeSeat, seatState: 'Weird' })?.backupStatus).toBe('Unknown');
     });
 
     it('resolves known seat types and passes unknown types through', () => {
-      expect(buildSeatCard({ ...activeSeat, type: 'google_user' })?.seatType).toBe(
-        'Google Workspace user'
-      );
-      expect(buildSeatCard({ ...activeSeat, type: 'teams_channel' })?.seatType).toBe(
-        'teams_channel'
-      );
+      expect(buildSeatCard({ ...activeSeat, seatType: 'SharedMailbox' })?.seatType).toBe('Shared mailbox');
+      expect(buildSeatCard({ ...activeSeat, seatType: 'TeamSite' })?.seatType).toBe('Team site');
+      expect(buildSeatCard({ ...activeSeat, seatType: 'NewKind' })?.seatType).toBe('NewKind');
     });
 
-    it('falls back through email to the seat id for the title', () => {
-      expect(buildSeatCard({ ...activeSeat, displayName: undefined })?.title).toBe(
-        'dana.ruiz@example.com'
-      );
-      expect(
-        buildSeatCard({ ...activeSeat, displayName: undefined, email: undefined })?.title
-      ).toBe(activeSeat.id);
+    it('falls back through mainId to the remote id for the title', () => {
+      expect(buildSeatCard({ ...activeSeat, name: undefined })?.title).toBe('dana.ruiz@example.com');
+      expect(buildSeatCard({ remoteId: 'r-1' })?.title).toBe('r-1');
     });
 
-    it('reports "No backups recorded" when the timestamp is absent or invalid', () => {
-      const noBackup = buildSeatCard({ ...activeSeat, lastBackupAt: undefined });
-      expect(noBackup?.backupStatus).toBe('No backups recorded');
-      expect(noBackup?.lastBackupAt).toBeUndefined();
-      const badDate = buildSeatCard({ ...activeSeat, lastBackupAt: 'not-a-date' });
-      expect(badDate?.backupStatus).toBe('No backups recorded');
-      expect(badDate?.lastBackupAt).toBeUndefined();
+    it('only treats mainId as an email when it looks like one', () => {
+      const site = buildSeatCard({ remoteId: 'r-2', mainId: 'https://acme.sharepoint.com/sites/x', seatType: 'Site' });
+      expect(site?.email).toBeUndefined();
+      expect(site?.title).toBe('https://acme.sharepoint.com/sites/x');
+    });
+
+    it('keys on mainId when remoteId is absent', () => {
+      expect(buildSeatCard({ mainId: 'a@b.com' })?.seatId).toBe('a@b.com');
     });
 
     it('returns null for payloads that are not a seat', () => {
@@ -254,11 +257,11 @@ describe('MCP Apps seat card', () => {
     });
 
     it('survives sparse seats (card is best-effort)', () => {
-      expect(buildSeatCard({ id: 'abc' } as never)).toEqual({
+      expect(buildSeatCard({ remoteId: 'abc' })).toEqual({
         seatId: 'abc',
         title: 'abc',
-        status: 'Active',
-        backupStatus: 'No backups recorded',
+        status: 'Unknown',
+        backupStatus: 'Unknown',
       });
     });
   });

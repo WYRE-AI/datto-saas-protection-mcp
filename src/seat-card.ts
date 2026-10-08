@@ -7,7 +7,7 @@
  * simply means the host renders no card while the JSON payload is unchanged.
  */
 
-import type { SaasProtectionSeat } from "@wyre-technology/node-datto-saas-protection";
+import type { SaasProtectionSeat } from "@wyre-ai/node-datto-saas-protection";
 
 export const SEAT_CARD_RESOURCE_URI = "ui://datto-saas/seat-card.html";
 
@@ -32,9 +32,9 @@ export interface SeatCard {
   email?: string;
   /** Label-resolved seat type, e.g. "Mailbox" or "Google Workspace user". */
   seatType?: string;
-  /** "Active" or "Archived" (retained-but-deleted). */
+  /** Datto seatState: Active / Paused / Archived / Unprotected. */
   status: string;
-  /** "Backed up" when a last-backup timestamp exists, else "No backups recorded". */
+  /** Human wording of the seat's protection state. */
   backupStatus: string;
   /** ISO 8601 timestamp of the most recent backup, when known. */
   lastBackupAt?: string;
@@ -86,48 +86,65 @@ export function resolveBrandFromEnv(): CardBrand {
   return brand;
 }
 
-/** Human-readable labels for the SDK's SeatType values. */
+/** Human-readable labels for Datto's (case-sensitive) seatType values. */
 const SEAT_TYPE_LABELS: Record<string, string> = {
-  mailbox: "Mailbox",
-  onedrive: "OneDrive",
-  sharepoint: "SharePoint site",
-  google_user: "Google Workspace user",
+  User: "User",
+  SharedMailbox: "Shared mailbox",
+  SharedDrive: "Shared drive",
+  Site: "SharePoint site",
+  TeamSite: "Team site",
+  Team: "Team",
 };
 
+/** Backup-status wording per Datto seatState. */
+const SEAT_STATE_BACKUP: Record<string, string> = {
+  active: "Protected (backups enabled)",
+  paused: "Paused (no new backups)",
+  archived: "Archived (backups retained)",
+  unprotected: "Not protected",
+};
+
+function nonEmpty(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() !== "" ? value : undefined;
+}
+
 /**
- * Normalize an SDK seat into the flat, label-resolved payload the ui:// seat
- * card renders from. Seat types are resolved via SEAT_TYPE_LABELS (unknown
- * types pass through as-is), archived seats are labelled "Archived", and the
- * backup status is derived from the presence of a last-backup timestamp.
+ * Normalize a Datto seat (GET /v1/saas/{id}/seats row) into the flat,
+ * label-resolved payload the ui:// seat card renders from. The seat is keyed
+ * by remoteId (falling back to mainId); seat types resolve via
+ * SEAT_TYPE_LABELS (unknown types pass through); status is Datto's seatState.
+ * Datto's seat rows carry no last-backup timestamp, so lastBackupAt is only
+ * set when a payload happens to include one.
  */
 export function buildSeatCard(
   seat: Partial<SaasProtectionSeat> | null | undefined
 ): SeatCard | null {
-  if (!seat || typeof seat.id !== "string" || seat.id === "") {
-    return null;
-  }
+  if (!seat || typeof seat !== "object") return null;
+  const mainId = nonEmpty(seat.mainId);
+  const seatId = nonEmpty(seat.remoteId) ?? mainId;
+  if (!seatId) return null;
 
-  const email = typeof seat.email === "string" && seat.email ? seat.email : undefined;
-  const displayName =
-    typeof seat.displayName === "string" && seat.displayName ? seat.displayName : undefined;
+  const name = nonEmpty(seat.name);
+  const email = mainId && mainId.includes("@") ? mainId : undefined;
+  const state = nonEmpty(seat.seatState);
 
   let lastBackupAt: string | undefined;
-  if (typeof seat.lastBackupAt === "string" && seat.lastBackupAt) {
-    const parsed = new Date(seat.lastBackupAt);
+  const rawLast = nonEmpty((seat as Record<string, unknown>).lastBackupAt);
+  if (rawLast) {
+    const parsed = new Date(rawLast);
     if (!Number.isNaN(parsed.getTime())) lastBackupAt = parsed.toISOString();
   }
 
   const card: SeatCard = {
-    seatId: seat.id,
-    title: displayName ?? email ?? seat.id,
-    status: seat.archived === true ? "Archived" : "Active",
-    backupStatus: lastBackupAt ? "Backed up" : "No backups recorded",
+    seatId,
+    title: name ?? mainId ?? seatId,
+    status: state ?? "Unknown",
+    backupStatus: (state && SEAT_STATE_BACKUP[state.toLowerCase()]) ?? "Unknown",
   };
 
   if (email) card.email = email;
-  if (typeof seat.type === "string" && seat.type) {
-    card.seatType = SEAT_TYPE_LABELS[seat.type] ?? seat.type;
-  }
+  const type = nonEmpty(seat.seatType);
+  if (type) card.seatType = SEAT_TYPE_LABELS[type] ?? type;
   if (lastBackupAt) card.lastBackupAt = lastBackupAt;
 
   return card;

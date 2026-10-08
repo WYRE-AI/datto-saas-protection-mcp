@@ -6,7 +6,7 @@
  * ingress and builds the SDK client.
  */
 
-import { DattoSaasProtectionClient } from "@wyre-technology/node-datto-saas-protection";
+import { DattoSaasProtectionClient } from "@wyre-ai/node-datto-saas-protection";
 
 export interface DattoSaasCredentials {
   publicKey: string;
@@ -61,6 +61,9 @@ export function createClient(creds: DattoSaasCredentials): DattoSaasProtectionCl
     // Clean here too as the final guard before the SDK: the previous
     // `(creds.region as "us" | "eu")` cast was a no-op that let a placeholder
     // slip through to `resolveConfig`, which throws "Unsupported region".
-    region: (cleanCredential(creds.region) as "us" | "eu") || "us",
+    // The SDK no longer routes by region (Datto has a single API host), but it
+    // still validates the literal, so normalize anything other than "eu" to
+    // "us" rather than letting a stray value throw outside the tool handler.
+    region: cleanCredential(creds.region)?.toLowerCase() === "eu" ? "eu" : "us",
   });
 }
