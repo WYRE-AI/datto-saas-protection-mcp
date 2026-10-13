@@ -9,6 +9,15 @@
  * Supports both stdio (default) and HTTP (StreamableHTTP) transports.
  * The server factory itself lives in mcp-server.ts (side-effect free, so
  * tests can drive it directly); this entrypoint only wires up transports.
+ *
+ * HTTP transport refuses to start unless CONDUIT_S2S_SECRET is a real
+ * secret. Known placeholders are rejected. MCP_ALLOW_INSECURE_DEV=1 is a
+ * local-only escape hatch for an empty secret: it logs a warning, does not
+ * enforce X-Gateway-S2S, and listens on 127.0.0.1 only. A configured secret
+ * honors MCP_HTTP_HOST (default 127.0.0.1 when unset). Gateway mode rejects
+ * /mcp requests that omit credential headers and does not fall back to
+ * DATTO_SAAS_* env vars. /health stays unauthenticated. stdio does not use
+ * S2S auth.
  */
 
 import { createServer, IncomingMessage, ServerResponse, Server as HttpServer } from "node:http";
@@ -20,7 +29,81 @@ import { createMcpServer } from "./mcp-server.js";
 import { bindServerRef, runWithServerRef } from "./utils/server-ref.js";
 import { verifyS2sHeader, S2S_HEADER } from "./s2s-verify.js";
 
-const S2S_SECRET = process.env.CONDUIT_S2S_SECRET || "";
+/** Bind used when MCP_HTTP_HOST is unset, and the only bind the dev bypass allows. */
+const LOOPBACK_HOST = "127.0.0.1";
+
+/**
+ * Public example values. A copied placeholder must not verify as a real secret.
+ * Comparison is case-insensitive after trim. Unresolved ${...} config templates
+ * are rejected too.
+ */
+const KNOWN_PLACEHOLDER_SECRETS = new Set([
+  "replace-with-a-real-secret",
+  "your-s2s-secret",
+  "your-secret",
+  "changeme",
+  "change-me",
+  "placeholder",
+  "secret",
+  "example",
+  "replace-me",
+  "s2s-secret",
+]);
+
+const CONFIG_PLACEHOLDER = /^\$\{.*\}$/;
+
+function refuseStart(message: string): never {
+  console.error(message);
+  process.exit(1);
+}
+
+function headerValue(value: string | string[] | undefined): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+/** 127.0.0.1, localhost, and ::1, including a bracketed IPv6 form. */
+function isLoopbackBindHost(host: string): boolean {
+  const normalized = host.trim().toLowerCase().replace(/^\[(.+)\]$/, "$1");
+  return normalized === "127.0.0.1" || normalized === "localhost" || normalized === "::1";
+}
+
+/**
+ * Secret for X-Gateway-S2S on /mcp. Read at HTTP startup, not module load.
+ * Empty is fail-closed unless MCP_ALLOW_INSECURE_DEV is exactly "1". A known
+ * placeholder is refused even when that flag is set. The secret is never logged.
+ */
+function resolveHttpS2sSecret(): string {
+  const raw = (process.env.CONDUIT_S2S_SECRET ?? "").trim();
+  if (raw && (KNOWN_PLACEHOLDER_SECRETS.has(raw.toLowerCase()) || CONFIG_PLACEHOLDER.test(raw))) {
+    refuseStart(
+      "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is a known placeholder. " +
+        "Generate a secret with `openssl rand -hex 32` and set CONDUIT_S2S_SECRET to that value."
+    );
+  }
+  if (raw) return raw;
+  if (process.env.MCP_ALLOW_INSECURE_DEV === "1") return "";
+  refuseStart(
+    "Refusing to start HTTP transport: CONDUIT_S2S_SECRET is empty. " +
+      "Set CONDUIT_S2S_SECRET, or set MCP_ALLOW_INSECURE_DEV=1 for local development only."
+  );
+}
+
+/**
+ * No real secret: force 127.0.0.1. A non-loopback MCP_HTTP_HOST is overridden
+ * and logged. A configured secret honors MCP_HTTP_HOST; unset stays loopback.
+ */
+function resolveBindHost(s2sSecret: string): string {
+  const configured = (process.env.MCP_HTTP_HOST ?? "").trim();
+  if (s2sSecret) return configured || LOOPBACK_HOST;
+  if (configured && !isLoopbackBindHost(configured)) {
+    console.error(
+      `WARNING: MCP_HTTP_HOST=${configured} is not a loopback address. ` +
+        "MCP_ALLOW_INSECURE_DEV=1 without CONDUIT_S2S_SECRET cannot listen there. " +
+        `Binding ${LOOPBACK_HOST} only.`
+    );
+  }
+  return LOOPBACK_HOST;
+}
 
 // ---------------------------------------------------------------------------
 // Transport: stdio (default)
@@ -43,16 +126,24 @@ async function startStdioTransport(): Promise<void> {
 
 let httpServer: HttpServer | undefined;
 
-async function startHttpTransport(): Promise<void> {
+export async function startHttpTransport(): Promise<HttpServer> {
   const port = parseInt(process.env.MCP_HTTP_PORT || "8080", 10);
-  const host = process.env.MCP_HTTP_HOST || "0.0.0.0";
+  const s2sSecret = resolveHttpS2sSecret();
+  const host = resolveBindHost(s2sSecret);
+  if (!s2sSecret) {
+    console.error(
+      "SECURITY WARNING: CONDUIT_S2S_SECRET is empty and MCP_ALLOW_INSECURE_DEV=1. " +
+        `HTTP /mcp is not enforcing X-Gateway-S2S and is limited to loopback (${host}). ` +
+        "Do not use this outside local development."
+    );
+  }
   const authMode = process.env.AUTH_MODE || "env";
   const isGatewayMode = authMode === "gateway";
 
-  httpServer = createServer((req: IncomingMessage, res: ServerResponse) => {
+  const server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || "/", `http://${req.headers.host || "localhost"}`);
 
-    // Health endpoint - no auth required
+    // Health endpoint — liveness only. No auth and no credential reads.
     if (url.pathname === "/health") {
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end(
@@ -67,7 +158,9 @@ async function startHttpTransport(): Promise<void> {
     }
 
     if (url.pathname === "/mcp") {
-      if (S2S_SECRET && !verifyS2sHeader(req.headers[S2S_HEADER] as string | undefined, S2S_SECRET)) {
+      // Empty s2sSecret is only reachable when MCP_ALLOW_INSECURE_DEV=1.
+      // A configured secret is always enforced, before any credential extraction.
+      if (s2sSecret && !verifyS2sHeader(headerValue(req.headers[S2S_HEADER]), s2sSecret)) {
         res.writeHead(401, { "Content-Type": "application/json" });
         res.end(
           JSON.stringify({
@@ -93,11 +186,10 @@ async function startHttpTransport(): Promise<void> {
       // to avoid process.env race conditions under concurrent load.
       let gatewayCredentials: DattoSaasCredentials | undefined;
       if (isGatewayMode) {
-        const headers = req.headers as Record<string, string | string[] | undefined>;
-        const publicKey = headers["x-datto-saas-public-key"] as string | undefined;
-        const secretKey = headers["x-datto-saas-secret-key"] as string | undefined;
+        const publicKey = cleanCredential(headerValue(req.headers["x-datto-saas-public-key"]));
+        const secretKey = cleanCredential(headerValue(req.headers["x-datto-saas-secret-key"]));
         // Strip an unresolved placeholder before the "us" fallback (issue #73).
-        const region = cleanCredential(headers["x-datto-saas-region"] as string | undefined) || "us";
+        const region = cleanCredential(headerValue(req.headers["x-datto-saas-region"])) || "us";
 
         if (!publicKey || !secretKey) {
           res.writeHead(401, { "Content-Type": "application/json" });
@@ -160,8 +252,10 @@ async function startHttpTransport(): Promise<void> {
     res.end(JSON.stringify({ error: "Not found", endpoints: ["/mcp", "/health"] }));
   });
 
+  httpServer = server;
+
   await new Promise<void>((resolve) => {
-    httpServer!.listen(port, host, () => {
+    server.listen(port, host, () => {
       console.error(`Datto SaaS Protection MCP server listening on http://${host}:${port}/mcp`);
       console.error(`Health check available at http://${host}:${port}/health`);
       console.error(
@@ -170,6 +264,8 @@ async function startHttpTransport(): Promise<void> {
       resolve();
     });
   });
+
+  return server;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,8 +292,6 @@ function setupShutdownHandlers(): void {
 // ---------------------------------------------------------------------------
 
 async function main(): Promise<void> {
-  setupShutdownHandlers();
-
   const transportType = process.env.MCP_TRANSPORT || "stdio";
 
   if (transportType === "http") {
@@ -205,6 +299,15 @@ async function main(): Promise<void> {
   } else {
     await startStdioTransport();
   }
+
+  setupShutdownHandlers();
 }
 
-main().catch(console.error);
+// Vitest imports this module to call startHttpTransport. Skip the CLI
+// entrypoint there. `node dist/index.js` still starts stdio or HTTP.
+if (process.env.VITEST !== "true") {
+  main().catch((error) => {
+    console.error(error);
+    process.exit(1);
+  });
+}
