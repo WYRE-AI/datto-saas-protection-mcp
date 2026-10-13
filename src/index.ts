@@ -57,6 +57,7 @@ function refuseStart(message: string): never {
   throw new Error(message);
 }
 
+/** Single non-blank header value. Repeated or empty headers are treated as absent. */
 function headerValue(value: string | string[] | undefined): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
@@ -109,6 +110,7 @@ function resolveBindHost(s2sSecret: string): string {
 // Transport: stdio (default)
 // ---------------------------------------------------------------------------
 
+/** Start the stdio transport. This path does not use S2S authentication. */
 async function startStdioTransport(): Promise<void> {
   const server = createMcpServer();
   // stdio is single-session for the whole process — no concurrent tenants
@@ -286,6 +288,7 @@ export async function startHttpTransport(): Promise<HttpServer> {
 // Graceful shutdown
 // ---------------------------------------------------------------------------
 
+/** Close the HTTP server on SIGINT or SIGTERM, then exit. */
 function setupShutdownHandlers(): void {
   const shutdown = async () => {
     console.error("Shutting down Datto SaaS Protection MCP server...");
@@ -305,6 +308,7 @@ function setupShutdownHandlers(): void {
 // Main
 // ---------------------------------------------------------------------------
 
+/** Start stdio or HTTP from `MCP_TRANSPORT`. An invalid HTTP secret rejects. */
 async function main(): Promise<void> {
   const transportType = process.env.MCP_TRANSPORT || "stdio";
 

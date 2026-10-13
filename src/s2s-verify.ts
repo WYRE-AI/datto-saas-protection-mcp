@@ -27,6 +27,10 @@ export const S2S_HEADER = "x-gateway-s2s";
 
 const HEADER_VALUE_RE = /^t=(\d{1,15}),v1=([0-9a-f]{64})$/;
 
+/**
+ * True when `headerValue` is `t=<unix>,v1=<hmac-sha256>` for `secret` and the
+ * timestamp is inside the skew window. An empty secret or header is false.
+ */
 export function verifyS2sHeader(
   headerValue: string | undefined,
   secret: string,
