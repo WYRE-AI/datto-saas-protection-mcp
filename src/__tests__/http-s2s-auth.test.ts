@@ -117,6 +117,17 @@ async function listen(): Promise<Server> {
   return server;
 }
 
+/** Invalid-secret startup rejects. Callers can catch it; the process does not exit. */
+async function rejectedStartup(): Promise<Error> {
+  try {
+    await startHttpTransport();
+  } catch (error) {
+    expect(error).toBeInstanceOf(Error);
+    return error as Error;
+  }
+  throw new Error("startHttpTransport() resolved");
+}
+
 function mcpHeaders(extra?: Record<string, string>): Record<string, string> {
   return {
     "content-type": "application/json",
@@ -149,9 +160,6 @@ beforeEach(() => {
   vi.spyOn(console, "error").mockImplementation((...args: unknown[]) => {
     logs.push(args.map((arg) => (typeof arg === "string" ? arg : JSON.stringify(arg))).join(" "));
   });
-  vi.spyOn(process, "exit").mockImplementation(((code?: number) => {
-    throw new Error(`process.exit:${String(code)}`);
-  }) as typeof process.exit);
 
   process.env.MCP_HTTP_PORT = "0";
   process.env.MCP_HTTP_HOST = "127.0.0.1";
@@ -188,23 +196,23 @@ afterEach(async () => {
 
 describe("HTTP startup", () => {
   it("refuses to start when CONDUIT_S2S_SECRET is empty", async () => {
-    await expect(startHttpTransport()).rejects.toThrow("process.exit:1");
-    const text = logText();
-    expect(text).toContain("Refusing to start HTTP transport");
-    expect(text).toContain("CONDUIT_S2S_SECRET is empty");
-    expect(text).not.toContain(S2S_SECRET);
+    const error = await rejectedStartup();
+    expect(error.message).toContain("Refusing to start HTTP transport");
+    expect(error.message).toContain("CONDUIT_S2S_SECRET is empty");
+    expect(error.message).not.toContain(S2S_SECRET);
+    expect(logText()).not.toContain(S2S_SECRET);
   });
 
   it("refuses to start when CONDUIT_S2S_SECRET is whitespace", async () => {
     process.env.CONDUIT_S2S_SECRET = "   ";
-    await expect(startHttpTransport()).rejects.toThrow("process.exit:1");
-    expect(logText()).toContain("CONDUIT_S2S_SECRET is empty");
+    const error = await rejectedStartup();
+    expect(error.message).toContain("CONDUIT_S2S_SECRET is empty");
   });
 
   it("still refuses when MCP_ALLOW_INSECURE_DEV is not exactly 1", async () => {
     process.env.MCP_ALLOW_INSECURE_DEV = "true";
-    await expect(startHttpTransport()).rejects.toThrow("process.exit:1");
-    expect(logText()).toContain("Refusing to start HTTP transport");
+    const error = await rejectedStartup();
+    expect(error.message).toContain("Refusing to start HTTP transport");
   });
 
   it.each(["changeme", "ChangeMe", "secret", "replace-me", "your-s2s-secret", "replace-with-a-real-secret"])(
@@ -212,21 +220,22 @@ describe("HTTP startup", () => {
     async (placeholder) => {
       process.env.CONDUIT_S2S_SECRET = `  ${placeholder}  `;
       process.env.MCP_ALLOW_INSECURE_DEV = "1";
-      await expect(startHttpTransport()).rejects.toThrow("process.exit:1");
-      const text = logText();
-      expect(text).toContain("Refusing to start HTTP transport");
-      expect(text).toContain("known placeholder");
-      const redacted = text.replaceAll("CONDUIT_S2S_SECRET", "").replaceAll("Generate a secret", "");
+      const error = await rejectedStartup();
+      expect(error.message).toContain("Refusing to start HTTP transport");
+      expect(error.message).toContain("known placeholder");
+      const redacted = error.message.replaceAll("CONDUIT_S2S_SECRET", "").replaceAll("Generate a secret", "");
       expect(redacted.toLowerCase()).not.toContain(placeholder.toLowerCase());
-      expect(text).not.toContain("SECURITY WARNING");
+      expect(error.message).not.toContain("SECURITY WARNING");
+      expect(logText()).not.toContain(placeholder);
     }
   );
 
   it("refuses an unresolved ${...} placeholder", async () => {
     process.env.CONDUIT_S2S_SECRET = "${user_config.conduit_s2s_secret}";
     process.env.MCP_ALLOW_INSECURE_DEV = "1";
-    await expect(startHttpTransport()).rejects.toThrow("process.exit:1");
-    expect(logText()).toContain("known placeholder");
+    const error = await rejectedStartup();
+    expect(error.message).toContain("known placeholder");
+    expect(error.message).not.toContain("${user_config.conduit_s2s_secret}");
     expect(logText()).not.toContain("${user_config.conduit_s2s_secret}");
   });
 

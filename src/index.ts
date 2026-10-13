@@ -52,9 +52,9 @@ const KNOWN_PLACEHOLDER_SECRETS = new Set([
 
 const CONFIG_PLACEHOLDER = /^\$\{.*\}$/;
 
+/** Startup failure returned to the caller. The CLI exits from `main()`'s rejection handler. */
 function refuseStart(message: string): never {
-  console.error(message);
-  process.exit(1);
+  throw new Error(message);
 }
 
 function headerValue(value: string | string[] | undefined): string | undefined {
@@ -126,6 +126,20 @@ async function startStdioTransport(): Promise<void> {
 
 let httpServer: HttpServer | undefined;
 
+/**
+ * Start the HTTP transport and return the listening server.
+ *
+ * `CONDUIT_S2S_SECRET` must be a real secret. An empty value or a known
+ * placeholder rejects startup by throwing; the process keeps running so the
+ * caller can handle it. `MCP_ALLOW_INSECURE_DEV=1` is the only empty-secret
+ * bypass, and a placeholder is still rejected when that flag is set.
+ *
+ * A configured secret honors `MCP_HTTP_HOST`, which defaults to `127.0.0.1`
+ * when unset. The empty-secret bypass always binds `127.0.0.1`. A wider host
+ * in that mode is overridden, and that override is logged.
+ *
+ * @throws {Error} When the S2S secret is missing or a known placeholder.
+ */
 export async function startHttpTransport(): Promise<HttpServer> {
   const port = parseInt(process.env.MCP_HTTP_PORT || "8080", 10);
   const s2sSecret = resolveHttpS2sSecret();

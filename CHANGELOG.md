@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+- HTTP transport fails closed on `CONDUIT_S2S_SECRET`. An empty or known-placeholder secret refuses startup by throwing, so a direct caller of `startHttpTransport()` can handle it; the CLI exits from that rejection. `MCP_ALLOW_INSECURE_DEV=1` is the only empty-secret bypass: it skips `X-Gateway-S2S` and binds `127.0.0.1` only. With a real secret, `/mcp` requires a valid `X-Gateway-S2S` header. Gateway mode requires `X-Datto-SaaS-Public-Key` and `X-Datto-SaaS-Secret-Key` on the request and does not fall back to `DATTO_SAAS_*`.
+
+### Changed
+- Docker image defaults to `AUTH_MODE=gateway`. Compose publishes HTTP on `127.0.0.1:8080` and requires `CONDUIT_S2S_SECRET`.
+
 ### Added
 - **Interactive seat card via MCP Apps (SEP-1865).** `datto_saas_get_seat` results render as an interactive backup-status card in MCP Apps hosts (Claude Desktop/web, and other hosts advertising the `io.modelcontextprotocol/ui` extension), instead of a wall of JSON. The card shows the seat's display name, email, label-resolved seat type (Mailbox / OneDrive / SharePoint site / Google Workspace user), Active/Archived status, derived backup status, and last-backup timestamp. The card is read-only — restores stay behind the elicitation-gated `datto_saas_queue_restore` tool. Non-App hosts are unaffected: the tool's JSON payload is the raw seat plus a new `_card` field.
   - The renderable tool advertises the UI via `_meta` (`ui/resourceUri`, plus the nested `ui.resourceUri` form) pointing at a new `ui://datto-saas/seat-card.html` resource served as `text/html;profile=mcp-app`. The server now declares the `resources` capability and answers `resources/list` / `resources/read` for the card.
