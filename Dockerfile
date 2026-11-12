@@ -21,6 +21,7 @@ RUN --mount=type=secret,id=npmrc,target=/root/.npmrc npm prune --omit=dev
 
 # Production stage
 FROM node:26-alpine AS production
+RUN apk -U upgrade --no-cache
 
 RUN addgroup -g 1001 -S datto && \
     adduser -S datto -u 1001 -G datto
@@ -35,6 +36,8 @@ RUN npm cache clean --force
 
 RUN mkdir -p /app/logs && chown -R datto:datto /app
 
+# npm is not needed at runtime; removing it clears Trivy CVEs in its bundled deps
+RUN rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 USER datto
 
 EXPOSE 8080
