@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **The HTTP transport no longer exits on a malformed request (WYREAI-741).** The request
+  target was parsed against the client-supplied `Host` header, and a value that does not parse
+  (or a target such as `//`) threw inside the request listener before authentication. The
+  target is now parsed against a fixed base, so `Host` is no longer consulted, and a target
+  that still cannot be parsed gets a `400` JSON response while the server keeps running.
+
 ### Security
 - HTTP transport fails closed on `CONDUIT_S2S_SECRET`. An empty or known-placeholder secret refuses startup by throwing, so a direct caller of `startHttpTransport()` can handle it; the CLI exits from that rejection. `MCP_ALLOW_INSECURE_DEV=1` is the only empty-secret bypass: it skips `X-Gateway-S2S` and binds `127.0.0.1` only. With a real secret, `/mcp` requires a valid `X-Gateway-S2S` header. Gateway mode requires `X-Datto-SaaS-Public-Key` and `X-Datto-SaaS-Secret-Key` on the request and does not fall back to `DATTO_SAAS_*`.
 
